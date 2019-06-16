@@ -1,0 +1,24 @@
+<?xml version="1.0"?>
+<opencv_storage>
+
+<ProjectParam>
+
+<nMode>3</nMode>
+<!-- Mode 1: Gotcha; Mode 2: Cross-correlation with Gotcha (CASP-GO); Mode 3: Hybrid mode merging CASP-GO with ASP MGM -->
+<strStereoListFile>/home/nvidia/CASP-GO/casp-go-params/input_tif.txt</strStereoListFile>
+<strRPCListFile>/home/nvidia/CASP-GO/casp-go-params/input_rpc.txt</strRPCListFile>
+<strBaseListFile>/home/nvidia/CASP-GO/casp-go-params/Base-DIR.txt</strBaseListFile> 
+<!-- The reference image list. Put N/A if no corresponding reference image. -->
+
+<strAspParamFile>/home/nvidia/CASP-GO/casp-go-params/stereo.c2</strAspParamFile>
+<!-- point to the ASP parameter file -->
+<strUclParamFile>/home/nvidia/CASP-GO/casp-go-params/c2.xml</strUclParamFile>
+<!-- point to the UCL parameter file -->
+
+<strWorkingDir>/home/nvidia/CASP-GO/casp-go-sw/</strWorkingDir>
+<strInputDir>/home/nvidia/CASP-GO/casp-go-downloads/</strInputDir>
+<strOutputDir>/home/nvidia/CASP-GO/casp-go-results/</strOutputDir>
+
+</ProjectParam>
+
+</opencv_storage>
