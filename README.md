@@ -14,7 +14,9 @@ Before running CASP-GO:
   ./casp-go-param/input.txt \ 
   ./casp-go-param/base.txt \ 
   ./casp-go-param/ctx.xml \ 
-  ./casp-go-param/stereo.ctx
+  ./casp-go-param/stereo.ctx \
+  set_env.sh
+  
 2. source set_env.sh
 
 
