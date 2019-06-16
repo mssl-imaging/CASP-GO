@@ -1,0 +1,1155 @@
+#include "ctxWrapper.h"
+#include "CDensifyParam.h"
+#include "CDensify.h"
+
+ctxWrapper::ctxWrapper(string strParam)
+{
+    //introduction
+    cout << "*************************************************************************" << endl;
+    cout << "*                                                                       *" << endl;
+    cout << "*  Welcome to use the CASP-GO auto-DTM system v2.0                      *" << endl;
+    cout << "*  >> CTX processing                                                    *" << endl;
+    cout << "*  Developer: Imaging Group, MSSL, UCL.                                 *" << endl;
+    cout << "*                                                                       *" << endl;
+    cout << "*  CASP-GO is based on NASA Ames Stereo Pipeline and UCL subroutines    *" << endl;
+    cout << "*                                                                       *" << endl;
+    cout << "*  Contact email:                                                       *" << endl;
+    cout << "*  yu.tao{at}ucl.ac.uk                                                  *" << endl;
+    cout << "*  j.muller{at}ucl.ac.uk                                                *" << endl;
+    cout << "*                                                                       *" << endl;
+    cout << "*  Spicifications for error/warning codes:                              *" << endl;
+    cout << "*  (1) input issue;                                                     *" << endl;
+    cout << "*  (2) system issue;                                                    *" << endl;
+    cout << "*  (3) processing issue.                                                *" << endl;
+    cout << "*                                                                       *" << endl;
+    cout << "*************************************************************************" << endl << endl;
+
+    cout << "Info: CASP-GO is checking project parameters and inputs." << endl;
+    m_strParam = strParam;
+
+    //Prepare all project parameters including input file directories and UCL workflow parameters.
+    prepareProjectParam();
+
+    //check all project parameters
+    if (!validateProjParam()){
+        cerr << "ERROR (2): The project input files cannot be validated" << endl;
+        exit(1);
+    }
+
+    //Check all project inputs
+    if (!validateProjInputs()){
+        cerr << "ERROR (2): The project input files not in correct format" << endl;
+        exit(1);
+    }
+    cout << "Info: project parameters/input checking completed." << endl;
+
+}
+
+ctxWrapper::~ctxWrapper(){
+}
+
+void ctxWrapper::prepareProjectParam(){
+    FileStorage fs(m_strParam, FileStorage::READ);
+    FileNode tl = fs["ProjectParam"];
+
+    m_nMode = (int)tl["nMode"];
+    m_strStereoListFile = (string)tl["strStereoListFile"];
+    m_strBaseListFile = (string)tl["strBaseListFile"];
+    m_strAspParamFile = (string)tl["strAspParamFile"];
+    m_strUclParamFile = (string)tl["strUclParamFile"];
+
+    m_strWorkingDir = (string)tl["strWorkingDir"];
+    m_strInputDir = (string)tl["strInputDir"];
+    m_strOutputDir = (string)tl["strOutputDir"];
+
+}
+
+
+bool ctxWrapper::validateProjParam(){
+    bool bRes = true;
+    QDir qdir;
+
+    if (m_nMode != 1 && m_nMode != 2 && m_nMode != 3){
+        cerr << "ERROR (1): The processing mode specified does not exist. Please select from 1 - 3." << endl;
+        bRes = false;
+    }
+
+    //check stereo list file exists
+    if (!qdir.exists(m_strStereoListFile.c_str())){
+        cerr << "ERROR (1): Stereo list file does not exist." << endl;
+        bRes = false;
+    }
+
+    if (!qdir.exists(m_strBaseListFile.c_str())){
+        cerr << "ERROR (1): Basemap list file does not exist." << endl;
+        bRes = false;
+    }
+
+    //check ASP workflow parameter file exists
+    if (!qdir.exists(m_strAspParamFile.c_str())){
+        cerr << "ERROR (1): Parameter file for ASP workflow does not exist." << endl;
+        bRes = false;
+    }
+
+    //check UCL workflow parameter file exists
+    if (!qdir.exists(m_strUclParamFile.c_str())){
+        cerr << "ERROR (1): Parameter file for UCL workflow does not exist." << endl;
+        bRes = false;
+    }
+
+    //check project working directory (and all executables) exist
+    if (!qdir.exists(m_strWorkingDir.c_str())){
+        cerr << "ERROR (1): Project working directory does not exist. Please check directory settings in param.xml file or creat the directory manually" << endl;
+        bRes = false;
+    }
+
+    //check project input directory exist
+    if (!qdir.exists(m_strInputDir.c_str())){
+        cout << "Warning (1): Project input directory does not exist. Creating..." << endl;
+        qdir.mkpath(QString(m_strInputDir.c_str()));
+    }
+    //check project output directory exist
+    if (!qdir.exists(m_strOutputDir.c_str())){
+        cout << "Warning (1): Project output directory does not exist. Creating..." << endl;
+        qdir.mkpath(QString(m_strOutputDir.c_str()));
+    }
+
+    return bRes;
+}
+
+
+bool ctxWrapper::validateProjInputs(){
+    bool bRes = true;
+    // Read in stereo image list file
+
+    int nNum = 0;
+    string buf;
+    ifstream sfStereoList(m_strStereoListFile.c_str());
+    cout << "Info: CASP-GO is loading stereo image URLs from the stereo list file provided." << endl;
+    while(sfStereoList)
+    {
+        if( getline( sfStereoList, buf ) )
+        {
+            nNum ++;
+            m_strvStereoList.push_back(buf);
+        }
+    }
+    sfStereoList.close();
+    cout << "Info: a total number of " << nNum << " stereo image URLs have been loaded to buf." << endl;
+    if(nNum%2 != 0){
+        cerr << "ERROR (1): Total image numbers from the stereo list file is not even. Please check the stereo list file for odd entries." << endl;
+        bRes = false;
+        exit(1);
+    }
+
+
+    for (int i=0; i<nNum; i+=2){
+        string strL = m_strvStereoList[i];
+        string strR = m_strvStereoList[i+1];
+        const size_t last_slash_idxL = strL.find_last_of("/\\");
+        const size_t last_slash_idxR = strR.find_last_of("/\\");
+
+        if (std::string::npos != last_slash_idxL)
+        {
+            strL.erase(0, last_slash_idxL + 1);
+        }
+        if (std::string::npos != last_slash_idxR)
+        {
+            strR.erase(0, last_slash_idxR + 1);
+        }
+        const size_t period_idxL = strL.rfind('.');
+        if (std::string::npos != period_idxL)
+        {
+            strL.erase(period_idxL);
+        }
+        const size_t period_idxR = strR.rfind('.');
+        if (std::string::npos != period_idxR)
+        {
+            strR.erase(period_idxR);
+        }
+        m_strvLeftIDList.push_back(strL);
+        m_strvRightIDList.push_back(strR);
+    }
+
+    int nNumL = m_strvLeftIDList.size();
+    int nNumR = m_strvRightIDList.size();
+    cout << "Info: a total number of " << nNumL << " left image IDs have been loaded to buf." << endl;
+    cout << "Info: a total number of " << nNumR << " right image IDs have been loaded to buf." << endl;
+
+    nNum = 0;
+    ifstream sfBaseList(m_strBaseListFile.c_str());
+    cout << "Info: CASP-GO is loading basemap directories from the basemap list file provided." << endl;
+    while(sfBaseList)
+    {
+        if( getline( sfBaseList, buf ) )
+        {
+            nNum ++;
+            m_strvBaseList.push_back(buf);
+        }
+    }
+    sfBaseList.close();
+    cout << "Info: a total number of " << nNum << " basemap directories have been loaded to buf." << endl;
+
+
+
+    if(m_strvLeftIDList.size()!= m_strvRightIDList.size()){
+        cerr << "ERROR (1): Total image numbers from the left ID list and right ID list files are different." << endl;
+        bRes = false;
+        exit(1);
+    }
+
+    if(m_strvLeftIDList.size()!= m_strvBaseList.size()){
+        cerr << "ERROR (1): Total number of the stereo pairs does not equal to the total number of lines of the basemap entries." << endl;
+        bRes = false;
+        exit(1);
+    }
+
+    FileStorage fs(m_strUclParamFile, FileStorage::READ);
+    FileNode tl = fs["processParam"];
+
+    m_nThreads = (int)tl["nThreads"];
+
+    return bRes;
+}
+
+
+
+void ctxWrapper::doBatchProcessing(){
+    int n = m_strvStereoList.size();
+    int nCount = 1;
+    for (nCount = 1; nCount <= n/2; nCount++){
+        cout << endl;
+        cout << endl;
+        cout << "Info: CASP-GO is downloading number " << nCount << " of the " << n/2 << " stereo pairs." << endl;
+        dataDownload(nCount);
+
+        if (checkDataDownload(nCount)){
+            cout << endl;
+            cout << endl;
+            cout << "Info: CASP-GO has checked the stereo pair just downloaded. They look OK." << endl;
+
+            char buff[20];
+            time_t now = time(NULL);
+            strftime(buff, 20, "%Y-%m-%dT%H:%M", localtime(&now));
+            m_strStartTime.clear();
+            m_strStartTime =  buff;
+            cout << endl;
+            cout << endl;
+            cout << "Info: CASP-GO started [ " << m_strStartTime << " ]." << endl;
+
+            cout << "Info: CASP-GO is pre-processing number " << nCount << " of the " << n/2 << " stereo pairs." << endl;
+            dataConversion(nCount);
+
+            if (checkDataConversion(nCount)){
+                cout << endl;
+                cout << endl;
+                cout << "Info: CASP-GO has checked the stereo pair just pre-processed. They look OK." << endl;
+                cout << "Info: CASP-GO is processing number " << nCount << " of the " << n/2 << " stereo pairs (Stage-1)." << endl;
+                dataProcessP1(nCount);
+
+                if (checkDataProcessP1(nCount)){
+                    cout << endl;
+                    cout << endl;
+                    cout << "Info: CASP-GO has checked the Stage-1 processing result. They look OK." << endl;
+                    cout << "Info: CASP-GO is processing number " << nCount << " of the " << n/2 << " stereo pairs (Stage-2)." << endl;
+                    dataProcessP2(nCount);
+
+                    if (checkDataProcessP2(nCount)){
+                        cout << endl;
+                        cout << endl;
+                        cout << "Info: CASP-GO has checked the Stage-2 processing result. They look OK." << endl;
+                        cout << "Info: CASP-GO is processing number " << nCount << " of the " << n/2 << " stereo pairs (Stage-3)." << endl;
+                        dataProcessP3(nCount);
+
+                        if (checkDataProcessP3(nCount)){
+                            cout << endl;
+                            cout << endl;
+                            cout << "Info: CASP-GO has checked the Stage-3 processing result. They look OK." << endl;
+                            cout << "Info: CASP-GO is processing number " << nCount << " of the " << n/2 << " stereo pairs (Stage-4)." << endl;
+                            dataProcessP4(nCount);
+
+                            char buff[20];
+                            time_t now = time(NULL);
+                            strftime(buff, 20, "%Y-%m-%dT%H:%M", localtime(&now));
+                            m_strEndTime.clear();
+                            m_strEndTime = buff;
+                            cout << "Info: CASP-GO finished [ " << m_strEndTime << " ]." << endl;
+                            cout << endl;
+                            cout << endl;
+                            cout << "Info: CASP-GO is saving metadata file for number " << nCount << " of the " << n/2 << " stereo pairs." << endl;
+                            saveMetaData(nCount);
+                            cout << endl;
+                            cout << endl;
+                            cout << "Info: CASP-GO has completed processing number " << nCount << " of the " << n/2 << " stereo pairs." << endl;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    cout << "******************" << endl;
+    cout << "*                *" << endl;
+    cout << "*  All done >_<  *" << endl;
+    cout << "*                *" << endl;
+    cout << "******************" << endl;
+}
+
+void ctxWrapper::dataDownload(int nNum){
+    int m_nNum = nNum;
+    int m_nLeft = 2*m_nNum - 2;
+    int m_nRight = 2*m_nNum - 1;
+    string m_strLeftImageURL = m_strvStereoList[m_nLeft];
+    string m_strRightImageURL = m_strvStereoList[m_nRight];
+
+    ostringstream strCmdLeft;
+    strCmdLeft << "wget -P " << m_strInputDir << " " << m_strLeftImageURL;
+    system(strCmdLeft.str().c_str());
+
+    ostringstream strCmdRight;
+    strCmdRight << "wget -P " << m_strInputDir << " " << m_strRightImageURL;
+    system(strCmdRight.str().c_str());
+}
+
+bool ctxWrapper::checkDataDownload(int nNum){
+    bool bRes = true;
+
+    cout << "Info: CASP-GO is checking the stereo pair just downloaded." << endl;
+
+    int m_nNum = nNum;
+    m_nNum = m_nNum - 1;
+
+    string m_strLeftImageID = m_strvLeftIDList[m_nNum];
+    string m_strLeftImageFile = m_strInputDir + m_strLeftImageID + ".IMG";
+    QDir qdir;
+    if (!qdir.exists(m_strLeftImageFile.c_str())){
+        cerr << "ERROR (2): the download of number " << m_nNum+1 << " of stereo left image (ID: "
+             << m_strLeftImageID << ") has failed. Skipping this stereo pair."
+             << " Please check from http://pds-imaging.jpl.nasa.gov for more information." << endl;
+        bRes = false;
+    }
+
+    string m_strRightImageID = m_strvRightIDList[m_nNum];
+    string m_strRightImageFile = m_strInputDir + m_strRightImageID + ".IMG";
+
+    if (!qdir.exists(m_strRightImageFile.c_str())){
+        cerr << "ERROR (2): the download of number " << m_nNum+1 << " of stereo right image (ID: "
+             << m_strRightImageID << ") has failed. Skipping this stereo pair."
+             << " Please check from http://pds-imaging.jpl.nasa.gov for more information." << endl;
+        bRes = false;
+    }
+
+    return bRes;
+}
+
+void ctxWrapper::dataConversion(int nNum){
+    int m_nNum = nNum;
+    m_nNum = m_nNum - 1;
+    string m_strLeftImageID = m_strvLeftIDList[m_nNum];
+    string m_strLeftImageFile = m_strInputDir + m_strLeftImageID + ".IMG";
+    string m_strRightImageID = m_strvRightIDList[m_nNum];
+    string m_strRightImageFile = m_strInputDir + m_strRightImageID + ".IMG";
+
+    cout << "Info: CASP-GO is preparing a list file for the stereo pair just requested." << endl;
+    m_nNum = m_nNum + 1;
+
+    stringstream ssNum;
+    ssNum << m_nNum;
+    string m_strNum = ssNum.str();
+    string m_strStereoProcessingList = m_strInputDir + "stereo-" + m_strNum + ".txt";
+
+    ofstream sfStereoProcessingList;
+    sfStereoProcessingList.open(m_strStereoProcessingList.c_str());
+    if (sfStereoProcessingList.is_open()){
+        sfStereoProcessingList << m_strLeftImageFile << endl;
+        sfStereoProcessingList << m_strRightImageFile << endl;
+        sfStereoProcessingList.close();
+    }
+
+    cout << "Info: CASP-GO is converting the stereo pair from PDS to USGS-ISIS format which is required by ASP."
+         << "It is now going through the following steps:"
+         << "1. PDS to USGS-ISIS CUB conversion; 2. Radiometric calibration; 3. Remove even/odd detector stripping; "
+         << "4. Update SPICE data for a camera cube; 5. Create the Line Scanner Sensor of a SOCET Set Line Scanner support file; "
+         << "6. Compute geometric and photometric information; 7. Convert the level 1 cub file to 8 bit." << endl;
+
+    string m_strConversionSW = m_strWorkingDir + "USGS/mroctx2isis.pl";
+    ostringstream strCmdConvert;
+    strCmdConvert << "perl " << m_strConversionSW << " " << m_strStereoProcessingList;
+    system(strCmdConvert.str().c_str());
+
+    string m_strLeftImageFile2 = m_strInputDir + m_strLeftImageID + ".lev1.cub";
+    string m_strRightImageFile2 = m_strInputDir + m_strRightImageID + ".lev1.cub";
+    string m_strConversionSW2 = m_strWorkingDir + "ASP/bin/cam2map4stereo.py";
+
+    QDir qdir;
+    if (!qdir.exists(m_strLeftImageFile2.c_str())){
+        cerr << "ERROR (3): the pre-process of number " << m_nNum+1 << " of stereo left image (ID: "
+             << m_strLeftImageID << ") has failed. Skipping this stereo pair."
+             << " Please check the data source using qview manually." << endl;
+    }
+
+    if (!qdir.exists(m_strRightImageFile2.c_str())){
+        cerr << "ERROR (3): the pre-process of number " << m_nNum+1 << " of stereo right image (ID: "
+             << m_strRightImageID << ") has failed. Skipping this stereo pair."
+             << " Please check the data source using qview manually." << endl;
+    }
+
+    ostringstream strCmdConvert2;
+    strCmdConvert2 << m_strConversionSW2 << " " << m_strLeftImageFile2 << " " << m_strRightImageFile2;
+    system(strCmdConvert2.str().c_str());
+
+}
+
+bool ctxWrapper::checkDataConversion(int nNum){
+    bool bRes = true;
+    cout << "Info: CASP-GO is checking the stereo pair just pre-processed." << endl;
+    int m_nNum = nNum;
+    m_nNum = m_nNum - 1;
+
+    string m_strLeftImageID = m_strvLeftIDList[m_nNum];
+    string m_strLeftImageFile = m_strInputDir + m_strLeftImageID + ".map.cub";
+    QDir qdir;
+    if (!qdir.exists(m_strLeftImageFile.c_str())){
+        cerr << "ERROR (3): the pre-process of number " << m_nNum+1 << " of stereo left image (ID: "
+             << m_strLeftImageID << ") has failed. Skipping this stereo pair."
+             << " Please check the data source using qview manually." << endl;
+        bRes = false;
+    }
+
+    string m_strRightImageID = m_strvRightIDList[m_nNum];
+    string m_strRightImageFile = m_strInputDir + m_strRightImageID + ".map.cub";
+
+    if (!qdir.exists(m_strRightImageFile.c_str())){
+        cerr << "ERROR (3): the pre-process of number " << m_nNum+1 << " of stereo right image (ID: "
+             << m_strRightImageID << ") has failed. Skipping this stereo pair."
+             << " Please check the data source using qview manually." << endl;
+        bRes = false;
+    }
+
+    return bRes;
+}
+
+void ctxWrapper::dataProcessP1(int nNum){
+    cout << "Info: CASP-GO is running Bundle Adjustment." << endl;
+    int m_nNum = nNum;
+    m_nNum = m_nNum - 1;
+
+    string m_strP1SW = m_strWorkingDir + "ASP/bin/bundle_adjust";
+
+    string m_strLeftImageID = m_strvLeftIDList[m_nNum];
+    string m_strLeftImageFile = m_strInputDir + m_strLeftImageID + ".map.cub";
+    string m_strRightImageID = m_strvRightIDList[m_nNum];
+    string m_strRightImageFile = m_strInputDir + m_strRightImageID + ".map.cub";
+
+    string m_strResID = m_strLeftImageID + "-" + m_strRightImageID;
+    string m_strResBA = m_strOutputDir + m_strResID + "/ba";
+
+    ostringstream strCmdP1;
+    strCmdP1 << m_strP1SW << " " << m_strLeftImageFile << " " << m_strRightImageFile << " -o " << m_strResBA;
+    system(strCmdP1.str().c_str());
+}
+
+bool ctxWrapper::checkDataProcessP1(int nNum){
+    bool bRes = true;
+    cout << "Info: CASP-GO is checking the stage-1 processing result." << endl;
+    int m_nNum = nNum;
+    m_nNum = m_nNum - 1;
+
+    string m_strLeftImageID = m_strvLeftIDList[m_nNum];
+    string m_strRightImageID = m_strvRightIDList[m_nNum];
+    string m_strResID = m_strLeftImageID + "-" + m_strRightImageID;
+
+    string m_strLeftImageFile = m_strOutputDir + m_strResID + "/ba-" + m_strLeftImageID + ".map.adjust";
+    string m_strRightImageFile = m_strOutputDir + m_strResID + "/ba-" + m_strRightImageID + ".map.adjust";
+
+    QDir qdir;
+    if (!qdir.exists(m_strLeftImageFile.c_str())){
+        cerr << "ERROR (3): the process (Stage-1) of number " << m_nNum+1 << " of stereo left image (ID: "
+             << m_strLeftImageID << ") has failed. Skipping this stereo pair."
+             << " Please check if the SPICE data has been successfully attached to the converted cub file." << endl;
+        bRes = false;
+    }
+
+    if (!qdir.exists(m_strRightImageFile.c_str())){
+        cerr << "ERROR (3): the process (Stage-1) of number " << m_nNum+1 << " of stereo right image (ID: "
+             << m_strRightImageID << ") has failed. Skipping this stereo pair."
+             << " Please check if the SPICE data has been successfully attached to the converted cub file." << endl;
+        bRes = false;
+    }
+
+    return bRes;
+}
+
+void ctxWrapper::dataProcessP2(int nNum){
+    cout << "Info: CASP-GO is running stereo processing." << endl;
+    int m_nNum = nNum;
+    m_nNum = m_nNum - 1;    
+
+    string m_strLeftImageID = m_strvLeftIDList[m_nNum];
+    string m_strLeftImageFile = m_strInputDir + m_strLeftImageID + ".map.cub";
+    string m_strRightImageID = m_strvRightIDList[m_nNum];
+    string m_strRightImageFile = m_strInputDir + m_strRightImageID + ".map.cub";
+
+    string m_strResID = m_strLeftImageID + "-" + m_strRightImageID;
+    string m_strResP2 = m_strOutputDir + m_strResID + "/" + m_strResID;
+    string m_strResBA = m_strOutputDir + m_strResID + "/ba";
+
+    ostringstream strCmdP21;
+    string m_strP2SW = m_strWorkingDir + "ASP/bin/stereo_pprc";
+    strCmdP21 << m_strP2SW << " -s " << m_strAspParamFile << " "
+             << m_strLeftImageFile << " " << m_strRightImageFile << " "
+             << m_strResP2 << " --bundle-adjust-prefix " << m_strResBA
+             << " --threads " << m_nThreads;
+    system(strCmdP21.str().c_str());
+
+    if (m_nMode == 1){
+
+        string m_strL = m_strResP2 + "-L.tif";
+        string m_strR = m_strResP2 + "-R.tif";
+
+        QDir qdir;
+        if (!qdir.exists(m_strL.c_str())){
+            cerr << "ERROR (3): cannot find the ASP pre-processed left image." << endl;
+
+        }
+        if (!qdir.exists(m_strR.c_str())){
+            cerr << "ERROR (3): cannot find the ASP pre-processed right image." << endl;
+        }
+
+        initialFeatureMatching(m_nNum);
+        densification(m_nNum);
+
+        //convert the -c1.txt and -c2.txt to tif and make -c3.tif for stereo_tri. MSSL blades are down now cannot check -c3 format. Change Later.
+
+    }
+
+    else if (m_nMode == 2){
+        ostringstream strCmdP22;
+        m_strP2SW = m_strWorkingDir + "ASP/bin/stereo_corr";
+        strCmdP22 << m_strP2SW << " -s " << m_strAspParamFile << " "
+                  << m_strLeftImageFile << " " << m_strRightImageFile << " "
+                  << m_strResP2 << " --bundle-adjust-prefix " << m_strResBA
+                  << " --threads " << m_nThreads << " --corr-timeout 600";
+        system(strCmdP22.str().c_str());
+
+        //ostringstream strCmdP221;
+        //m_strP2SW = m_strWorkingDir + "UCL/InitialRefinement";
+        //strCmdP221 << m_strP2SW << " " << m_strResP2;
+        //system(strCmdP221.str().c_str());
+
+        ostringstream strCmdP23;
+        m_strP2SW = m_strWorkingDir + "ASP/bin/stereo_rfne";
+        strCmdP23 << m_strP2SW << " -s " << m_strAspParamFile << " "
+                  << m_strLeftImageFile << " " << m_strRightImageFile << " "
+                  << m_strResP2 << " --bundle-adjust-prefix " << m_strResBA
+                  << " --threads " << m_nThreads << " --corr-timeout 600";
+        system(strCmdP23.str().c_str());
+
+        ostringstream strCmdP24;
+        m_strP2SW = m_strWorkingDir + "ASP/bin/stereo_fltr";
+        strCmdP24 << m_strP2SW << " -s " << m_strAspParamFile << " "
+                  << m_strLeftImageFile << " " << m_strRightImageFile << " "
+                  << m_strResP2 << " --bundle-adjust-prefix " << m_strResBA
+                  << " --threads " << m_nThreads << " --corr-timeout 600";
+        system(strCmdP24.str().c_str());
+    }
+
+    else if (m_nMode == 3){
+
+
+        string m_strResHB1 = m_strResP2 + "-CG";
+        string m_strResHB2 = m_strResP2 + "-MGM";
+        string m_strResPC1 = m_strResHB1 + "-PC.tif";
+        string m_strResPC2 = m_strResHB2 + "-PC.tif";
+        string m_strL1 = m_strResHB1 + "-L.tif";
+        string m_strResDEM1 = m_strResHB1 + "-DEM.tif";
+        string m_strResDEM2 = m_strResHB2 + "-DEM.tif";
+        string m_strResPC1_trans = m_strResHB1 + "-trans_source.tif";
+        string m_strResDEM1_trans = m_strResHB1 + "-trans_source-DEM.tif";
+        string m_strResDEM3tmp = m_strResP2 + "-tile-0.tif";
+        string m_strResDEM3 = m_strResP2 + "-DEM.tif";
+        string m_strResORI3tmp = m_strResHB1 + "-DRG.tif";
+        string m_strResORI3 = m_strResP2 + "-DRG.tif";
+
+
+
+        ostringstream strCmdHB1_1;
+        string m_strProcHB1_1 = m_strWorkingDir + "ASP/bin/stereo";
+        strCmdHB1_1 << m_strProcHB1_1 << " -s " << m_strAspParamFile << " "
+                    << m_strLeftImageFile << " " << m_strRightImageFile << " "
+                    << m_strResHB1 << " --enable-fill-holes --fill-holes-max-size 10000 --threads " << m_nThreads << " --corr-timeout 900";
+        system(strCmdHB1_1.str().c_str());
+
+        ostringstream strCmdHB1_2;
+        string m_strProcHB1_2 = m_strWorkingDir + "ASP/bin/point2dem";
+        strCmdHB1_2 << m_strProcHB1_2 << " " << m_strResPC1 << " --orthoimage " << m_strL1
+                    << " --datum MOLA --dem-hole-fill-len 250 --orthoimage-hole-fill-len 350 --median-filter-params 25 25.5"
+                    << " --threads " << m_nThreads;
+        system(strCmdHB1_2.str().c_str());
+
+        ostringstream strCmdHB2_1;
+        string m_strProcHB2_1 = m_strWorkingDir + "ASP/bin/parallel_stereo";
+        strCmdHB2_1 << m_strProcHB2_1 << " -s " << m_strAspParamFile << " "
+                    << m_strLeftImageFile << " " << m_strRightImageFile << " "
+                    << m_strResHB2 << " --stereo-algorithm 2 --corr-kernel 9 9 --corr-tile-size 1024 --cost-mode 4"
+                    << " --median-filter-size 15 --texture-smooth-size 13 --texture-smooth-scale 0.15 --sgm-collar-size 768"
+                    << " --corr-blob-filter 11 --enable-fill-holes --fill-holes-max-size 10000";
+        system(strCmdHB2_1.str().c_str());
+
+        ostringstream strCmdHB2_2;
+        string m_strProcHB2_2 = m_strWorkingDir + "ASP/bin/point2dem";
+        strCmdHB2_2 << m_strProcHB2_2 << " " << m_strResPC2
+                    << " --datum MOLA --dem-hole-fill-len 250 --median-filter-params 25 25.5"
+                    << " --threads " << m_nThreads;
+        system(strCmdHB2_2.str().c_str());
+
+        ostringstream strCmdHB3;
+        string m_strProcHB3 = m_strWorkingDir + "ASP/bin/pc_align";
+        strCmdHB3 << m_strProcHB3 << " " << m_strResDEM2 << " " << m_strResDEM1
+                  << " -o " << m_strResHB1 << " --max-displacement 3000 --datum MOLA"
+                  << " --save-transformed-source-points --num-iterations 2000 --max-num-reference-points 9000000"
+                  << " --max-num-source-points 10000 --threads " << m_nThreads;
+        system(strCmdHB3.str().c_str());
+
+        ostringstream strCmdHB4;
+        string m_strProcHB4 = m_strWorkingDir + "ASP/bin/point2dem";
+        strCmdHB4 << m_strProcHB4 << " " << m_strResPC1_trans << " --dem-hole-fill-len 1250 --threads " << m_nThreads;
+        system(strCmdHB4.str().c_str());
+
+        ostringstream strCmdHB5;
+        string m_strProcHB5 = m_strWorkingDir + "ASP/bin/dem_mosaic";
+        strCmdHB5 << m_strProcHB5 << " " << m_strResDEM2 << " " << m_strResDEM1_trans << " -o "
+                  << m_strResP2 << " --priority-blending-length 350 --threads " << m_nThreads;
+        system(strCmdHB5.str().c_str());
+
+        ostringstream strCmdHB6;
+        string m_strProcHB6 = "mv";
+        strCmdHB6 << m_strProcHB6 << " " << m_strResDEM3tmp << " " << m_strResDEM3;
+        system(strCmdHB6.str().c_str());
+
+        ostringstream strCmdHB7;
+        string m_strProcHB7 = "mv";
+        strCmdHB7 << m_strProcHB7 << " " << m_strResORI3tmp << " " << m_strResORI3;
+        system(strCmdHB7.str().c_str());
+
+    }
+
+    else {
+        cerr << "ERROR (1): Unrecognised processing mode. Please check input project parameter file." << endl;
+        exit(1);
+    }
+
+}
+
+
+void ctxWrapper::initialFeatureMatching(int nNum){
+    cout << "Info: CASP-GO is running Gotcha matching ..." << endl;
+    int m_nNum = nNum;
+
+    string m_strLeftImageID = m_strvLeftIDList[m_nNum];
+    string m_strRightImageID = m_strvRightIDList[m_nNum];
+    string m_strRes = m_strOutputDir + m_strLeftImageID + "-" + m_strRightImageID + "/" + m_strLeftImageID + "-" + m_strRightImageID;
+    string m_strTPFile = m_strRes + "-TP.txt";
+    string m_strL = m_strRes + "-L.tif";
+    string m_strR = m_strRes + "-R.tif";
+
+    string m_strL_8bit = m_strRes + "-L_8bit.tif";
+    string m_strR_8bit = m_strRes + "-R_8bit.tif";
+
+    ostringstream strCmd1;
+    strCmd1 << "gdal_translate -ot Byte -of GTiff -a_nodata 0 -scale 0 1 0 255 "
+               << m_strL << " " << m_strL_8bit;
+    system(strCmd1.str().c_str());
+    ostringstream strCmd2;
+    strCmd2 << "gdal_translate -ot Byte -of GTiff -a_nodata 0 -scale 0 1 0 255 "
+               << m_strR << " " << m_strR_8bit;
+    system(strCmd2.str().c_str());
+
+    Mat matL = imread(m_strL_8bit, CV_LOAD_IMAGE_ANYDEPTH);
+    Mat matR = imread(m_strR_8bit, CV_LOAD_IMAGE_ANYDEPTH);
+
+    matL.convertTo(matL, CV_8UC1);
+    matR.convertTo(matR, CV_8UC1);
+
+    std::vector<KeyPoint> keypoints_1, keypoints_2;
+    Mat descriptors_1, descriptors_2;
+    Ptr<FeatureDetector> detector = ORB::create();
+    Ptr<DescriptorExtractor> descriptor = ORB::create();
+    Ptr<DescriptorMatcher> matcher  = DescriptorMatcher::create ( "BruteForce-Hamming" );
+
+    cout << endl;
+    cout << "Info: detecting Oriented FAST feature points ..." << endl;
+
+    detector->detect ( matL, keypoints_1 );
+    detector->detect ( matR, keypoints_2 );
+
+    cout << "Info: Deriving BRIEF descriptors ..." << endl;
+    descriptor->compute ( matL, keypoints_1, descriptors_1 );
+    descriptor->compute ( matR, keypoints_2, descriptors_2 );
+
+    cout << "Info: Matching BRIEF descriptors with BruteForce-Hamming ..." << endl;
+    vector<DMatch> matches;
+    matcher->match ( descriptors_1, descriptors_2, matches );
+
+    double min_dist=10000, max_dist=0;
+
+    cout << "Info: Finding min/max distances of all matches ..." << endl;
+    for ( int i = 0; i < descriptors_1.rows; i++ ){
+        double dist = matches[i].distance;
+        if ( dist < min_dist ) min_dist = dist;
+        if ( dist > max_dist ) max_dist = dist;
+    }
+    cout << "Info: Discarding bad matches ..." << endl;
+
+    vector<DMatch> good_matches;
+    for ( int i = 0; i < descriptors_1.rows; i++ ){
+        if ( matches[i].distance <= max ( 2*min_dist, 30.0 ) ){
+            good_matches.push_back ( matches[i] );
+        }
+    }
+
+    cout << "Info: stroing initial TPs for the current stereo pair ..." << endl;
+
+    vector<float> m_fvLx, m_fvLy;
+    vector<float> m_fvRx, m_fvRy;
+
+    for(vector<DMatch>::size_type i=0; i<good_matches.size(); i++){
+        float m_fLx = keypoints_1[good_matches[i].queryIdx].pt.x;
+        float m_fLy = keypoints_1[good_matches[i].queryIdx].pt.y;
+
+        float m_fRx = keypoints_2[good_matches[i].trainIdx].pt.x;
+        float m_fRy = keypoints_2[good_matches[i].trainIdx].pt.y;
+
+        m_fvLx.push_back(m_fLx);
+        m_fvLy.push_back(m_fLy);
+        m_fvRx.push_back(m_fRx);
+        m_fvRy.push_back(m_fRy);
+    }
+
+    ofstream sfTP;
+    sfTP.open(m_strTPFile.c_str());
+    sfTP.precision(10);
+    int nLen = m_fvLx.size();
+    int nEle = 5;
+    if (sfTP.is_open()){
+        sfTP << nLen << " " << nEle << endl;
+        for (int i = 0 ; i < nLen ;i++){
+            float fLx, fLy;
+            float fRx, fRy;
+            fLx = m_fvLx.at(i);
+            fLy = m_fvLy.at(i);
+            fRx = m_fvRx.at(i);
+            fRy = m_fvRy.at(i);
+            sfTP << fLx << " " << fLy << " "
+                 << fRx << " " << fRy << " "
+                 << 0.5 << " " << endl;
+        }
+        sfTP.close();
+        cout << "Info: completed writing TP files for the current stereo pair." << endl;
+
+    }
+    else
+        cout << "ERROR (3): Cannot write TP files in processing mode 1, please check space and permissions." << endl;
+
+}
+
+
+void ctxWrapper::densification(int nNum){
+
+    cout << "Info: CASP-GO is running Gotcha matching ..." << endl;
+    int m_nNum = nNum;
+
+    string m_strLeftImageID = m_strvLeftIDList[m_nNum];
+    string m_strRightImageID = m_strvRightIDList[m_nNum];
+    string m_strRes = m_strOutputDir + m_strLeftImageID + "-" + m_strRightImageID + "/" + m_strLeftImageID + "-" + m_strRightImageID;
+
+    string m_strL_8bit = m_strRes + "-L_8bit.tif";
+    string m_strR_8bit = m_strRes + "-R_8bit.tif";
+
+
+    FileStorage fs(m_strUclParamFile, FileStorage::READ);
+    FileNode tl = fs["sGotchaParam"];
+    CDensifyParam paramDense;
+    paramDense.m_nProcType = 0;
+    paramDense.m_paramGotcha.m_fDiffCoef = 0.05;
+    paramDense.m_paramGotcha.m_fDiffThr = 0.1;
+    paramDense.m_paramGotcha.m_nDiffIter = 5;
+
+    Mat matL = imread(m_strL_8bit, CV_LOAD_IMAGE_ANYDEPTH);
+    paramDense.m_paramGotcha.m_nMinTile = matL.cols+matL.rows;
+
+    paramDense.m_paramGotcha.m_nNeiType = (int)tl["nNeiType"];
+    paramDense.m_paramGotcha.m_paramALSC.m_bIntOffset = (int)tl["bIntOffset"];
+    paramDense.m_paramGotcha.m_paramALSC.m_bWeighting = (int)tl["bWeight"];
+    paramDense.m_paramGotcha.m_paramALSC.m_fAffThr = (float)tl["fAff"];
+    paramDense.m_paramGotcha.m_paramALSC.m_fDriftThr = (float)tl["fDrift"];
+    paramDense.m_paramGotcha.m_paramALSC.m_fEigThr = (float)tl["fMaxEigenValue"];
+    paramDense.m_paramGotcha.m_paramALSC.m_nMaxIter = (int)tl["nALSCIteration"];
+    paramDense.m_paramGotcha.m_paramALSC.m_nPatch = (int)tl["nALSCKernel"];
+    paramDense.m_strTPFile = m_strRes + "-TP.txt";
+
+    paramDense.m_strImgL = m_strL_8bit;
+    paramDense.m_strImgR = m_strR_8bit;
+
+    paramDense.m_strOutPath = m_strOutputDir + m_strLeftImageID + "-" + m_strRightImageID + "/";
+
+    paramDense.m_strUpdatedDispX = m_strRes + "-c1.txt";
+    paramDense.m_strUpdatedDispY = m_strRes + "-c2.txt";
+
+    CDensify densify(paramDense);
+    cout << "Info: densifying ... " << endl;
+
+    int nErrCode = densify.performDensitification();
+    if (nErrCode != CDensifyParam::NO_ERR){
+        cerr << "Info: Processing error on densifying operation (ERROR CODE: " << nErrCode << " )." << endl;
+    }
+}
+
+
+
+bool ctxWrapper::checkDataProcessP2(int nNum){
+    bool bRes = true;
+    cout << "Info: CASP-GO is checking the stage-2 processing result." << endl;
+    int m_nNum = nNum;
+    m_nNum = m_nNum - 1;
+
+    if  (m_nMode != 3) {
+        string m_strLeftImageID = m_strvLeftIDList[m_nNum];
+        string m_strRightImageID = m_strvRightIDList[m_nNum];
+        string m_strResID = m_strLeftImageID + "-" + m_strRightImageID;
+        string m_strResP2 = m_strOutputDir + m_strResID + "/" + m_strResID + "-F.tif";
+
+        QDir qdir;
+        if (!qdir.exists(m_strResP2.c_str())){
+            cerr << "ERROR (3): the process (Stage-2) of number " << m_nNum+1 << " of stereo pair (ID: "
+                 << m_strResID << ") has failed. Skipping this stereo pair."
+                 << " Please check if the input images are in very bad quality." << endl;
+            bRes = false;
+        }
+    }
+    return bRes;
+
+}
+
+void ctxWrapper::dataProcessP3(int nNum){
+
+
+    cout << "Info: CASP-GO is performing Gotcha refinement." << endl;
+    int m_nNum = nNum;
+    m_nNum = m_nNum - 1;
+
+    string m_strP3SW = m_strWorkingDir + "UCL/GotchaDisparityRefine";
+
+    string m_strLeftImageID = m_strvLeftIDList[m_nNum];
+    string m_strLeftImageFile = m_strInputDir + m_strLeftImageID + ".map.cub";
+    string m_strRightImageID = m_strvRightIDList[m_nNum];
+    string m_strRightImageFile = m_strInputDir + m_strRightImageID + ".map.cub";
+
+    string m_strResID = m_strLeftImageID + "-" + m_strRightImageID;
+    string m_strResP2 = m_strOutputDir + m_strResID + "/" + m_strResID + "-F.tif";
+    string m_strResP2old = m_strOutputDir + m_strResID + "/" + m_strResID + "-F-old.tif";
+    string m_strResP2PC = m_strOutputDir + m_strResID + "/" + m_strResID + "-PC.tif";
+    string m_strResP2L = m_strOutputDir + m_strResID + "/" + m_strResID + "-L.tif";
+    string m_strResP2R = m_strOutputDir + m_strResID + "/" + m_strResID + "-R.tif";
+
+    string m_strResP3 = m_strOutputDir + m_strResID + "/" + m_strResID;
+    string m_strResP3c1 = m_strOutputDir + m_strResID + "/" + m_strResID + "-c1.tif";
+    string m_strResP3c2 = m_strOutputDir + m_strResID + "/" + m_strResID + "-c2.tif";
+    string m_strResP3c3 = m_strOutputDir + m_strResID + "/" + m_strResID + "-c3.tif";
+
+    string m_strResP3c1refined = m_strOutputDir + m_strResID + "/" + m_strResID + "-c1_refined.tif";
+    string m_strResP3c2refined = m_strOutputDir + m_strResID + "/" + m_strResID + "-c2_refined.tif";
+    string m_strResP3c3refined = m_strOutputDir + m_strResID + "/" + m_strResID + "-c3_refined.tif";
+
+    string m_strResBA = m_strOutputDir + m_strResID + "/ba";
+
+    if (m_nMode == 1){
+        cout << "Info: this step is not completed yet. Please use other processing mode." << endl;
+
+    }
+
+    if (m_nMode == 2){
+        ostringstream strCmdP31;
+        strCmdP31 << "gdal_translate " << m_strResP2 << " -of GTiff -b 1 " << m_strResP3c1;
+        system(strCmdP31.str().c_str());
+
+        ostringstream strCmdP32;
+        strCmdP32 << "gdal_translate " << m_strResP2 << " -of GTiff -b 2 " << m_strResP3c2;
+        system(strCmdP32.str().c_str());
+
+        ostringstream strCmdP34;
+        strCmdP34 << "gdal_translate " << m_strResP2 << " -of GTiff -b 3 " << m_strResP3c3;
+        system(strCmdP34.str().c_str());
+
+        ostringstream strCmdP35;
+        strCmdP35 << m_strP3SW << " " << m_strResP2L << " " << m_strResP2R << " "
+                  << m_strResP3c1 << " " << m_strResP3c2 << " " << m_strResP3;
+        system(strCmdP35.str().c_str());
+
+        ostringstream strCmdP36;
+        strCmdP36 << "mv " << m_strResP2 << " " << m_strResP2old;
+        system(strCmdP36.str().c_str());
+
+        ostringstream strCmdP37;
+        strCmdP37 << "gdal_merge.py -separate " << m_strResP3c1refined << " " << m_strResP3c2refined << " " << m_strResP3c3
+                  << " -o " << m_strResP2 << " -of GTiff -co COMPRESS=LZW";
+        system(strCmdP37.str().c_str());
+
+        ostringstream strCmdP38;
+        m_strP3SW = m_strWorkingDir + "ASP/bin/stereo_tri";
+        strCmdP38 << m_strP3SW << " -s " << m_strAspParamFile << " "
+                  << m_strLeftImageFile << " " << m_strRightImageFile << " "
+                  << m_strResP3 << " --bundle-adjust-prefix " << m_strResBA
+                  << " --threads " << m_nThreads;
+        system(strCmdP38.str().c_str());
+
+        ostringstream strCmdP39;
+        m_strP3SW = m_strWorkingDir + "ASP/bin/point2dem";
+        strCmdP39 << m_strP3SW << " " << m_strResP2PC << " --orthoimage " << m_strResP2L
+                  << " -r Mars --dem-hole-fill-len 350 --orthoimage-hole-fill-len 350 --median-filter-params 25 25.5"
+                  << " --threads " << m_nThreads;
+        system(strCmdP39.str().c_str());
+    }
+
+    else if (m_nMode == 3){
+        cout << "Info: this step is skipped in Hybrid mode." << endl;
+    }
+
+}
+
+bool ctxWrapper::checkDataProcessP3(int nNum){
+    bool bRes = true;
+    cout << "Info: CASP-GO is checking the stage-3 processing result." << endl;
+
+    int m_nNum = nNum;
+    m_nNum = m_nNum - 1;
+
+    string m_strLeftImageID = m_strvLeftIDList[m_nNum];
+    string m_strRightImageID = m_strvRightIDList[m_nNum];
+    string m_strResID = m_strLeftImageID + "-" + m_strRightImageID;
+    string m_strResP3DEM = m_strOutputDir + m_strResID + "/" + m_strResID + "-DEM.tif";
+    string m_strResP3DRG = m_strOutputDir + m_strResID + "/" + m_strResID + "-DRG.tif";
+
+    QDir qdir;
+    if (!qdir.exists(m_strResP3DEM.c_str())){
+        cerr << "ERROR (3): the process (Stage-3) of number " << m_nNum+1 << " of stereo pair (ID: "
+             << m_strResID << ") has failed. Skipping this stereo pair."
+             << " No DTM file found. This might be a processing problem, please revise the stereo pair manually." << endl;
+        bRes = false;
+    }
+
+    if (!qdir.exists(m_strResP3DRG.c_str())){
+        cerr << "ERROR (3): the process (Stage-3) of number " << m_nNum+1 << " of stereo pair (ID: "
+             << m_strResID << ") has failed. Skipping this stereo pair."
+             << " No ORI file found. This might be a processing problem, please revise the stereo pair manually." << endl;
+        bRes = false;
+    }
+
+    return bRes;
+}
+
+void ctxWrapper::dataProcessP4(int nNum){
+    cout << "Info: CASP-GO is correcting the projection information of DTM and ORI file." << endl;
+    int m_nNum = nNum;
+    m_nNum = m_nNum - 1;
+
+    string m_strLeftImageID = m_strvLeftIDList[m_nNum];
+    string m_strRightImageID = m_strvRightIDList[m_nNum];
+    string m_strResID = m_strLeftImageID + "-" + m_strRightImageID;
+    string m_strResP4 = m_strOutputDir + m_strResID + "/" + m_strResID;
+    string m_strResP3DEM = m_strOutputDir + m_strResID + "/" + m_strResID + "-DEM.tif";
+    string m_strResP3DRG = m_strOutputDir + m_strResID + "/" + m_strResID + "-DRG.tif";
+    string m_strResP4PROJ = m_strOutputDir + m_strResID + "/" + m_strResID + "-PROJ.tif";
+    string m_strResP4DTM = m_strOutputDir + m_strResID + "/" + m_strResID + "-DTM.tif";
+	string m_strResP4ORI32 = m_strOutputDir + m_strResID + "/" + m_strResID + "-ORI32bit.tif";
+    string m_strResP4ORI = m_strOutputDir + m_strResID + "/" + m_strResID + "-ORI.tif";
+    string m_strResP4Base = m_strOutputDir + m_strResID + "/" + m_strResID + "-Base.tif";
+
+
+    ostringstream strCmdP41;
+    strCmdP41 << "gdalwarp -t_srs '+proj=eqc +lat_ts=0 +lat_0=0 +lon_0=0 +x_0=0 +y_0=0 "
+             << "+a=3396000 +b=3396000 +units=m +no_defs' -r cubic "
+             << "-srcnodata -3.4028234663852886e+38 -dstnodata -3.4028234663852886e+38 -tr 6 6 "
+             << m_strResP3DEM << " " << m_strResP4PROJ;
+    system(strCmdP41.str().c_str());
+
+    ostringstream strCmdP42;
+    strCmdP42 << "gdalwarp -t_srs '+proj=eqc +lat_ts=0 +lat_0=0 +lon_0=0 +x_0=0 +y_0=0 "
+             << "+a=3396000 +b=3396000 +units=m +no_defs' -r cubic "
+             << "-srcnodata -3.4028234663852886e+38 -dstnodata -3.4028234663852886e+38 -tr 18 18 "
+             << m_strResP4PROJ << " " << m_strResP4DTM;
+    system(strCmdP42.str().c_str());
+
+    ostringstream strCmdP43;
+    strCmdP43 << "gdalwarp -t_srs '+proj=eqc +lat_ts=0 +lat_0=0 +lon_0=0 +x_0=0 +y_0=0 "
+             << "+a=3396000 +b=3396000 +units=m +no_defs' -r cubic "
+             << "-srcnodata -3.4028234663852886e+38 -dstnodata -3.4028234663852886e+38 -tr 6 6 "
+             << m_strResP3DRG << " " << m_strResP4ORI32;
+    system(strCmdP43.str().c_str());
+
+	ostringstream strCmdP431;
+	strCmdP431 << "gdal_translate -ot Byte -of GTiff -a_nodata 0 -scale 0 1 0 255 " 
+			   << m_strResP4ORI32 << " " << m_strResP4ORI;
+	system(strCmdP431.str().c_str());
+
+    string m_strBase = m_strvBaseList[m_nNum];
+    string m_strNoBase = "N/A";
+    if (m_strBase != m_strNoBase){
+        ostringstream strCmdP44;
+        strCmdP44 << "cp " << m_strBase << " " << m_strResP4Base;
+        system(strCmdP44.str().c_str());
+        cout << "Info: CASP-GO is co-registering the DTM and ORI to the basemap file provided." << endl;
+        //run co-registration.
+
+        ostringstream strCmdP441;
+        string m_strP4SW = m_strWorkingDir + "UCL/RegisterMap";
+        strCmdP441 << m_strP4SW << " " << m_strUclParamFile << " " << m_strResP4;
+        system(strCmdP441.str().c_str());
+        cout << "Info: co-registration completed." << endl;
+
+    }
+
+    else
+        cout << "Info: No basemap file provided, skipping co-registration." << endl;
+
+}
+
+void ctxWrapper::saveMetaData(int nNum){
+    cout << "Info: CASP-GO is saving a Metadata file." << endl;
+
+    FileStorage fs(m_strUclParamFile, FileStorage::READ);
+    FileNode tl = fs["sGotchaParam"];
+    int m_nALSCIteration = (int)tl["nALSCIteration"];
+    float m_fMaxEigenValue = (float)tl["fMaxEigenValue"];
+    int m_nALSCKernel = (int)tl["nALSCKernel"];
+    int m_nGrowNeighbour = (int)tl["nGrowNeighbour"];
+
+    tl = fs["MLParam"];
+    int m_nMLKernel = (int)tl["nMLKernel"];
+    int m_nMLIter = (int)tl["nMLIter"];
+
+    tl = fs["ORSParam"];
+    float m_fMaxDiff = (float)tl["fMaxDiff"];
+    int m_nPercentDiff = (int)tl["nPercentDiff"];
+    int m_nDiffKernel = (int)tl["nDiffKernel"];
+    float m_fPatchThreshold = (float)tl["fPatchThreshold"];
+    int m_nPercentReject = (int)tl["nPercentReject"];
+    int m_nErode = (int)tl["nErode"];
+
+    tl = fs["coKrigingParam"];
+    int m_nNeighbourLimit = (int)tl["nNeighbourLimit"];
+    int m_nDistLimit = (int)tl["nDistLimit"];
+    float m_fSpatialResRatio = (float)tl["fSpatialResRatio"];
+
+    tl = fs["MSASURFParam"];
+    int m_nOctave = (int)tl["nOctave"];
+    int m_nEdgeThreshold = (int)tl["nEdgeThreshold"];
+    float m_fMatchCoeff = (float)tl["fMatchCoeff"];
+    int m_nLayer = (int)tl["nLayer"];
+
+    int m_nNum = nNum;
+    m_nNum = m_nNum - 1;
+
+    string m_strLeftImageID = m_strvLeftIDList[m_nNum];
+    string m_strRightImageID = m_strvRightIDList[m_nNum];
+    string m_strResID = m_strLeftImageID + "-" + m_strRightImageID;
+    string m_strMeta = m_strOutputDir + m_strResID + "/" + m_strResID + "-Meta.txt";
+
+    ofstream sfMeta;
+    sfMeta.open(m_strMeta.c_str(), ios::app | ios::out);
+
+    if (sfMeta.is_open()){
+        sfMeta << "Object = AutoDTM" << endl;
+
+        sfMeta << "  Object = ProductInfo" << endl;
+        sfMeta << "    Object = Processing" << endl;
+        sfMeta << "      SoftwareName = CASP-GO" << endl;
+        sfMeta << "      SoftwareVersion = 2.0" << endl;
+        sfMeta << "      OperatingSystem = \"RHEL v7.2\"" << endl;
+        sfMeta << "      ProcessingStartTime = " << m_strStartTime << endl;
+        sfMeta << "      ProcessingEndTime = " << m_strEndTime << endl;
+        sfMeta << "      ProcessingOrganisation = TBD" << endl;
+        sfMeta << "      ProcessingResource = \"TBD\"" << endl;
+        sfMeta << "      ContactPerson = \"Yu Tao\"" << endl;
+        sfMeta << "      ContactEmail = \"yu.tao{at}ucl.ac.uk\"" << endl;
+        sfMeta << "    End_Object" << endl;
+        sfMeta << endl;
+
+        sfMeta << "    Object = Data" << endl;
+        sfMeta << "      ID = " << m_strResID << endl;
+        sfMeta << "      Format = GeoTiff" << endl;
+        sfMeta << "      Band = 1" << endl;
+        sfMeta << "      BitDepth = 32f" << endl;
+        sfMeta << "      DTMResolution = 18" << endl;
+        sfMeta << "      ORIResolution = 6" << endl;
+        sfMeta << "      Unit = Metre" << endl;
+        sfMeta << "      NodataValue = -3.4028234663852886e+38" << endl;
+        sfMeta << "      Projection = Equirectangular" << endl;
+        sfMeta << "    End_Object" << endl;
+        sfMeta << "  End_Object" << endl;
+        sfMeta << endl;
+
+        sfMeta << "  Object = Algorithm" << endl;
+        sfMeta << "    Group = ASP" << endl;
+        sfMeta << "      Name = \"Ames Stereo Pipeline Function Parameters\"" << endl;
+        sfMeta << "      InitialCorrKernel = N/A" << endl;
+        sfMeta << "      RefinementCorrKernel = N/A" << endl;
+        sfMeta << "      RefinementIteration = N/A" << endl;
+        sfMeta << "    End_Group" << endl;
+        sfMeta << endl;
+
+        sfMeta << "    Group = sGotcha" << endl;
+        sfMeta << "      Name = \"Adaptive Least Squares Correlation and Region growing Parameters\"" << endl;
+        sfMeta << "      ALSCIteration = " << m_nALSCIteration << endl;
+        sfMeta << "      MaxEigenValue = " << m_fMaxEigenValue << endl;
+        sfMeta << "      ALSCKernel = " << m_nALSCKernel << endl;
+        sfMeta << "      GrowNeighbour = " << m_nGrowNeighbour << endl;
+        sfMeta << "    End_Group" << endl;
+        sfMeta << endl;
+
+        sfMeta << "    Group = ML" << endl;
+        sfMeta << "      Name = \"Fast Maximum Likelihood Matching Parameters\"" << endl;
+        sfMeta << "      MLKernel = " << m_nMLKernel << endl;
+        sfMeta << "      MLIter = " << m_nMLIter << endl;
+        sfMeta << "    End_Group" << endl;
+        sfMeta << endl;
+
+        sfMeta << "    Group = ORS" << endl;
+        sfMeta << "      Name = \"Outlier Rejection Schemes Parameters\"" << endl;
+        sfMeta << "      MaxDiff = " << m_fMaxDiff << endl;
+        sfMeta << "      PercentDiff = " << m_nPercentDiff << endl;
+        sfMeta << "      DiffKernel = " << m_nDiffKernel << endl;
+        sfMeta << "      PatchThreshold = " << m_fPatchThreshold << endl;
+        sfMeta << "      PercentReject = " << m_nPercentReject << endl;
+        sfMeta << "      Erode = " << m_nErode << endl;
+        sfMeta << "    End_Group" << endl;
+        sfMeta << endl;
+
+        sfMeta << "    Group = coKriging" << endl;
+        sfMeta << "      Name = \"Co-Kriging Interpolation Parameters\"" << endl;
+        sfMeta << "      NeighbourLimit = " << m_nNeighbourLimit << endl;
+        sfMeta << "      DistLimit = " << m_nDistLimit << endl;
+        sfMeta << "      SpatialResRatio = " << m_fSpatialResRatio << endl;
+        sfMeta << "    End_Group" << endl;
+        sfMeta << endl;
+
+        sfMeta << "    Group = MSA-SIFT" << endl;
+        sfMeta << "      Name = \"Mutual Shape Adapted Scale Invariant Feature Transform Co-registion Parameters\"" << endl;
+        sfMeta << "      nOctave = " << m_nOctave << endl;
+        sfMeta << "      EdgeThreshold = " << m_nEdgeThreshold << endl;
+        sfMeta << "      MatchCoeff = " << m_fMatchCoeff << endl;
+        sfMeta << "      nLayer = " << m_nLayer << endl;
+        sfMeta << "    End_Group" << endl;
+        sfMeta << "  End_Object" << endl;
+        sfMeta << "End_Object" << endl;
+        sfMeta << "End" << endl;
+
+        sfMeta.close();
+    }
+    else
+        cout << "ERROR (2): Unable to save Metadata file for number " << m_nNum+1 << " of stereo pair (ID: "
+             << m_strResID << "). Skipping this stereo pair."
+             << " Please check if the project output directory is full." << endl;
+
+}
+
